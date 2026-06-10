@@ -1,0 +1,389 @@
+<title>Cartpole manifold</title>
+<script src="NeuralNetwork.js"></script>
+<canvas id="box" width="500" height="500" style="border:0px solid black">
+</canvas>
+<style>
+    body{
+    margin:0;
+    overflow: hidden;
+    background-color: aqua;
+    }
+</style>
+<script>
+    var box = document.getElementById("box")
+    box.width = innerWidth
+    box.height = innerHeight
+    pen = box.getContext("2d")
+    pen.fillStyle = "rgb(255,0,255)"
+    pen.fillRect(0,0,box.width,box.height)
+    let cycles = 1
+    //random color
+    function GiveColor(){
+        return `rgba(${Math.floor(Math.random() * (255 - 0 + 1) + 0)},${Math.floor(Math.random() * (255 - 0 + 1) + 0)},${Math.floor(Math.random() * (255 - 0 + 1) + 0)},1)`
+    }
+    //copy neural network
+    function CopyNetwork(network) {
+        let newNet = new NeuralNetwork(network.size)
+
+        // Deep copy weights, biases
+        for (let l = 0; l < network.layers.length; l++) {
+            for (let i = 0; i < network.layers[l].weights.length; i++) {
+                for (let j = 0; j < network.layers[l].weights[i].length; j++) {
+                    newNet.layers[l].weights[i][j] = network.layers[l].weights[i][j]
+                }
+            }
+            for (let i = 0; i < network.layers[l].biases.length; i++) {
+                newNet.layers[l].biases[i] = network.layers[l].biases[i]
+            }
+        }
+        return newNet
+    }
+    //find highest index of array
+    function argmax(arr){
+        let max = arr[0]
+        let index = 0
+        for(let i = 0; i < arr.length; i++){
+            if(arr[i] > max){
+                max = arr[i]
+                index = i
+            }
+        }
+        return index
+    }
+    //find highest value of array
+    function MaxValue(arr){
+        let max = arr[0]
+        for(let i = 0; i < arr.length; i++){
+            if(arr[i] > max){
+                max = arr[i]
+            }
+        }
+        return max
+    }
+    function DeepCopyExperience(expArray) {
+        return expArray.map(exp => ({
+            state: [...exp.state],
+            action: exp.action,          
+            reward: exp.reward,          
+            nextState: [...exp.nextState], 
+            done: exp.done               
+        }))
+    }
+    
+    class Cartpole{
+        constructor(){
+            //the cart
+            this.x = (box.width/2)-20
+            this.y = (box.height/2)-40
+            this.width = 80
+            this.height = 40
+            this.color = GiveColor()//"cyan"
+            this.speed = 0
+            this.acc = 0
+            this.force = 1.5
+            this.left = false
+            this.right = false
+            //the pole
+            this.pole = {
+                x: this.x + this.width/2,
+                y: this.y + this.height/2,
+                length: 200,
+                angle: Math.random()* (2*Math.PI),
+                color: this.color,
+                vel:0,
+                acc:0
+            }
+            this.DoDraw = true
+            //the AI
+            this.inputs = []
+            this.brain = new NeuralNetwork([7,32, 64, 3],0.9,0.999)
+            this.Qbrain = CopyNetwork(this.brain)
+            //Q learning stuff
+            this.experience = []
+            this.experienceSize = 10000
+            this.sampleSize = 256
+            this.oldState = []
+            this.newState = []
+            this.eps = 0.999
+            this.epsDecay = 0.9995
+            this.updateCount = 0
+            //time limit
+            this.timer = 0
+            this.timerLimit = 1000
+            this.isHoldingUp = false
+            this.updateTime = 10
+            this.updateFrame = 0
+            this.episodes = 1
+            this.text = 'ExperienceData'
+            this.IsTrained = false
+            this.MirrorWeight =0
+        }
+        reset(){
+            this.x = Math.floor(Math.random()*box.width)
+            this.y = (box.height/2)-40
+            this.speed = 0
+            this.acc = 0
+            this.pole.angle = Math.random()* (2*Math.PI)
+            this.pole.vel = 0
+            this.pole.acc = 0
+            this.timer = 0
+            this.isHoldingUp = false
+        }
+        think(){
+            //inputs (for wrapped)
+            this.inputs[0] = Math.cos((this.x + this.width/2) / box.width)
+            this.inputs[1] = Math.sin((this.x + this.width/2) / box.width)
+            this.inputs[2] = this.speed / 20
+            this.inputs[3] = Math.sin(this.pole.angle)
+            this.inputs[4] = Math.cos(this.pole.angle)
+            this.inputs[5] = this.pole.vel / 5
+            this.inputs[6] = this.pole.acc / 10 
+        }
+        draw(id){
+            pen.fillStyle = this.color
+            pen.fillRect(this.x,this.y,this.width,this.height)
+            //pole
+            pen.strokeStyle = this.pole.color
+            pen.lineWidth = 5
+            pen.beginPath()
+            pen.moveTo(this.pole.x,this.pole.y)
+            pen.lineTo(this.pole.x + this.pole.length*Math.cos(this.pole.angle),this.pole.y + this.pole.length*Math.sin(this.pole.angle))
+            pen.stroke()
+            //the ball on top
+            pen.beginPath()
+            pen.arc(this.pole.x + this.pole.length*Math.cos(this.pole.angle),this.pole.y + this.pole.length*Math.sin(this.pole.angle),20,0,Math.PI*2)
+            pen.fill()
+            //i wanna give the cart a face
+            //eyes
+            pen.fillStyle = "white"
+            pen.beginPath()
+            pen.arc(this.x + this.width/4,this.y + this.height/2,10,0,Math.PI*2)
+            pen.fill()
+            pen.beginPath()
+            pen.arc(this.x + 3*this.width/4,this.y + this.height/2,10,0,Math.PI*2)
+            pen.fill()
+            //derpy eyes
+            pen.fillStyle = "black"
+            pen.beginPath()
+            pen.arc((this.x + this.width/4)-5,this.y + this.height/2,8,0,Math.PI*2)
+            pen.fill()
+            pen.beginPath()
+            pen.arc((this.x + 3*this.width/4)+5,this.y + this.height/2,8,0,Math.PI*2)
+            pen.fill()
+            // UWU mouth
+            pen.strokeStyle = "black"
+            pen.lineWidth = 2
+            pen.beginPath()
+            pen.arc((this.x + this.width/2)-5,this.y + (this.height/2)+this.height/4,5,0,Math.PI)
+            pen.stroke()
+            pen.beginPath()
+            pen.arc((this.x + this.width/2)+5,this.y + (this.height/2)+this.height/4,5,0,Math.PI)
+            pen.stroke()
+            //text
+            pen.fillStyle = 'black';
+            pen.font = '14px Arial';
+            pen.fillText(id, this.x+this.width/2, this.y+this.height+14);
+
+
+
+        }
+        update(){
+            //increase time limit
+            this.timer++
+            //thinking
+            this.think()
+            this.oldState = [...this.inputs]
+            //AI
+            let outputs
+            if (Math.random() < this.eps) {
+                // explore: pick a random action
+                let action = Math.floor(Math.random() * 3) // 0, 1, or 2
+                outputs = [0,0,0]
+                outputs[action] = 1  // one-hot, just to be consistent
+            } else {
+                // exploit: use the brain network
+                outputs = this.brain.FeedForward(this.inputs)
+            }
+            let action = argmax(outputs)
+            switch(action){
+                case 0:
+                    this.left = true
+                    this.right = false
+                    break
+                case 1:
+                    this.left = false
+                    this.right = false
+                    break
+                case 2:
+                    this.left = false
+                    this.right = true
+                    break
+            }
+            //controls
+            if(this.left){
+                this.acc = -this.force
+            }else if(this.right){
+                this.acc = this.force
+            }else{
+                this.acc = 0
+            }
+            //moving
+            this.pole.x = this.x + this.width/2
+            this.speed += this.acc
+            this.speed *= 0.9
+            this.x += this.speed
+            //pendulum motion
+            //gravity
+            let g = 0.99
+            //update pole angle based on cart acceleration
+            this.pole.acc = (g / this.pole.length) * Math.cos(this.pole.angle) + (this.acc / this.pole.length) * Math.sin(this.pole.angle)
+            this.pole.vel += this.pole.acc
+            this.pole.angle += this.pole.vel
+            this.pole.vel *= 0.99 // damping
+            //boundaries (wrapped)
+            if(this.x+this.width <= 0){
+                this.x = box.width
+            }else if(this.x >= box.width + this.width){
+                this.x = -this.width
+            }
+            //get the new state
+            this.think()
+            this.newState = [...this.inputs]
+            // Calculate reward
+            let done =  this.timer > this.timerLimit
+            const angleFromUpright = this.pole.angle + Math.PI/2
+
+            // reward = uprightness - angular velocity penalty + survival bonus
+            const reward = 
+                (3*(Math.cos(angleFromUpright)))       // upright
+                -( 0.5 * Math.abs(this.pole.vel))   // penalize spinning
+                + 0.05                            // small time bonus
+            this.experience.push({
+                state: this.oldState,
+                hidden:this.brain.getHidden(this.oldState),
+                action: action,
+                qvalues: [...outputs],
+                reward: reward,
+                nextState: this.newState,
+                done: done,
+                timeStep:this.updateFrame,
+                episode:this.episodes
+            })
+            if(cycles == 500 && this.eps== 0 && this.experience.length >= this.experienceSize){
+                this.PrintData(0,this.experience)
+                this.experience = []
+                this.experienceSize = 50000
+                this.updateFrame = 0
+                this.episodes = 1
+                this.IsTrained = false
+                this.reset()
+                
+             }
+             // Maintain experience buffer
+             if(this.experience.length > this.experienceSize){
+                this.experience.shift()
+             }
+             if(done){
+                this.reset()
+                this.episodes++
+             }
+             this.updateFrame++
+             if(this.updateFrame % this.updateTime === 0 && this.eps != 0){
+                this.UpdateNetwork()
+             }
+             //if we have a trained model and we wanna save data
+             if(this.eps <= 0.01 && this.IsTrained){
+                this.eps = 0
+                this.experience = []
+                this.experienceSize = 50000
+                this.updateFrame = 0
+                this.episodes = 1
+                this.IsTrained = false
+                this.reset()
+                cycles = 500
+             }
+             //then we can call printdata to get the experience we need
+             if(this.eps == 0.01){
+                cycles = 1
+             }
+        }
+        //print all that data we need
+        PrintData(id,Data) {
+            let data = Data
+
+            let jsonData = JSON.stringify(data, null, 2)
+            let blob = new Blob([jsonData], { type: "application/json" })
+            let url = URL.createObjectURL(blob)
+
+            let a = document.createElement("a")
+            a.href = url
+            a.download = `${this.text}_${id}.json`
+            document.body.appendChild(a)
+            a.click()
+            document.body.removeChild(a)
+            URL.revokeObjectURL(url)
+        }
+        
+        UpdateNetwork() {
+            // QValue to store the target for training
+            let QValue = 0
+
+            // Only train if we have enough experiences
+            if(this.experience.length < this.sampleSize) return
+
+            for(let i = 0; i < this.sampleSize; i++){
+                let exp = this.experience[Math.floor(Math.random()*this.experience.length)]
+
+                if(exp.done){
+                    // If the episode ended, Q-value is just the reward
+                    QValue = exp.reward
+                }else{
+                    // 1. Use the online network (brain) to select the action with max Q in next state
+                    const nextQOnline = this.brain.FeedForward(exp.nextState)
+                    const bestNextAction = nextQOnline.indexOf(Math.max(...nextQOnline))
+
+                    // 2. Use the target network (Qbrain) to evaluate the selected action
+                    const nextQTarget = this.Qbrain.FeedForward(exp.nextState)
+                    QValue = exp.reward + 0.99 * nextQTarget[bestNextAction]
+                }
+
+                // Prepare target values
+                let TargetValues = this.brain.FeedForward(exp.state)
+                TargetValues[exp.action] = QValue
+
+                // Train the online network
+                this.brain.BackProp(exp.state, TargetValues, 0.001)
+            }
+
+            // Periodically update the target network
+            this.updateCount++
+            if(this.updateCount % 100 === 0){
+                this.Qbrain = CopyNetwork(this.brain)
+            }
+
+            // Decay epsilon
+            this.eps = Math.max(0.01, this.eps * this.epsDecay)
+        }
+    }
+    let cartpoles = []
+    for(let i = 0; i < 1; i++){
+        cartpoles.push(new Cartpole)
+    }
+    function loop(){
+        //updating
+        for(let i = 0; i < cycles; i++){
+            cartpoles.forEach((cartpole,i)=>{
+                cartpole.update()
+            })
+        }
+        //drawing
+        pen.fillStyle = "rgb(125,125,255)"
+        pen.fillRect(0,0,box.width,box.height)
+        cartpoles.forEach((cartpole,i)=>{
+                cartpole.draw(i)
+        })
+        //recalling
+        requestAnimationFrame(loop)
+    }
+    loop()
+</script>

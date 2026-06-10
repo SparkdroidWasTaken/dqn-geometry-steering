@@ -1,0 +1,312 @@
+<title>Cartpole steering</title>
+<script src="NeuralNetwork.js"></script>
+<canvas id="box" width="500" height="500" style="border:0px solid black">
+</canvas>
+<style>
+    body{
+    margin:0;
+    overflow: hidden;
+    background-color: aqua;
+    }
+</style>
+<script>
+    var box = document.getElementById("box")
+    box.width = innerWidth
+    box.height = innerHeight
+    pen = box.getContext("2d")
+    pen.fillStyle = "rgb(255,0,255)"
+    pen.fillRect(0,0,box.width,box.height)
+    let cycles = 1
+    let steeringData = null
+    //random color
+    function GiveColor(){
+        return `rgba(${Math.floor(Math.random() * (255 - 0 + 1) + 0)},${Math.floor(Math.random() * (255 - 0 + 1) + 0)},${Math.floor(Math.random() * (255 - 0 + 1) + 0)},1)`
+    }
+    //copy neural network
+    function CopyNetwork(network) {
+        let newNet = new NeuralNetwork(network.size)
+
+        // Deep copy weights, biases
+        for (let l = 0; l < network.layers.length; l++) {
+            for (let i = 0; i < network.layers[l].weights.length; i++) {
+                for (let j = 0; j < network.layers[l].weights[i].length; j++) {
+                    newNet.layers[l].weights[i][j] = network.layers[l].weights[i][j]
+                }
+            }
+            for (let i = 0; i < network.layers[l].biases.length; i++) {
+                newNet.layers[l].biases[i] = network.layers[l].biases[i]
+            }
+        }
+        return newNet
+    }
+    //find highest index of array
+    function argmax(arr){
+        let max = arr[0]
+        let index = 0
+        for(let i = 0; i < arr.length; i++){
+            if(arr[i] > max){
+                max = arr[i]
+                index = i
+            }
+        }
+        return index
+    }
+    //find highest value of array
+    function MaxValue(arr){
+        let max = arr[0]
+        for(let i = 0; i < arr.length; i++){
+            if(arr[i] > max){
+                max = arr[i]
+            }
+        }
+        return max
+    }
+    function DeepCopyExperience(expArray) {
+        return expArray.map(exp => ({
+            state: [...exp.state],
+            action: exp.action,          
+            reward: exp.reward,          
+            nextState: [...exp.nextState], 
+            done: exp.done               
+        }))
+    }
+    fetch('v_linear_idn.json')
+    .then(r => r.json())
+    .then(v => { steeringData = v; console.log("yey")})
+    let count = 1
+    class Cartpole{
+        constructor(){
+            //the cart
+            this.x = (box.width/2)-20
+            this.y = (box.height/2)-40
+            this.width = 80
+            this.height = 40
+            this.color = GiveColor()//"cyan"
+            this.speed = 0
+            this.acc = 0
+            this.force = 1.5
+            this.left = false
+            this.right = false
+            //the pole
+            this.pole = {
+                x: this.x + this.width/2,
+                y: this.y + this.height/2,
+                length: 200,
+                angle: (Math.PI / 2)-0.5,
+                color: this.color,
+                vel:0,
+                acc:0
+            }
+            this.DoDraw = true
+            //the AI
+            this.inputs = []
+            this.brain = new NeuralNetwork([7,32, 64, 3],0.9,0.999)
+            this.updateFrame = 0 
+            this.updateCount = 0
+            //time limit
+            this.timer = 0
+            this.timerLimit = 1000
+            this.episodes = 1
+            this.experience = []
+            this.oldState = []
+            this.newState = []
+            this.alpha = 1//Math.random() * (0.0107 - 0.0105) + 0.0105//0.0111 //so 0.01 seems to be good
+
+        }
+        reset(){
+            this.x = box.width / 2 - this.width / 2
+            this.y = (box.height/2)-40
+            this.speed = 0
+            this.acc = 0
+            this.pole.angle = (Math.PI / 2)-0.5
+            this.pole.acc = 0
+            this.timer = 0
+            this.isHoldingUp = false
+            //this.alpha = Math.random() * (0.0107 - 0.0105) + 0.0105
+        }
+        think(){
+            //inputs (for wrapped)
+            this.inputs[0] = Math.cos((this.x + this.width/2) / box.width)
+            this.inputs[1] = Math.sin((this.x + this.width/2) / box.width)
+            this.inputs[2] = this.speed / 20
+            this.inputs[3] = Math.sin(this.pole.angle)
+            this.inputs[4] = Math.cos(this.pole.angle)
+            this.inputs[5] = this.pole.vel / 5
+            this.inputs[6] = this.pole.acc / 10 
+        }
+        draw(id){
+            pen.fillStyle = this.color
+            pen.fillRect(this.x,this.y,this.width,this.height)
+            //pole
+            pen.strokeStyle = this.pole.color
+            pen.lineWidth = 5
+            pen.beginPath()
+            pen.moveTo(this.pole.x,this.pole.y)
+            pen.lineTo(this.pole.x + this.pole.length*Math.cos(this.pole.angle),this.pole.y + this.pole.length*Math.sin(this.pole.angle))
+            pen.stroke()
+            //the ball on top
+            pen.beginPath()
+            pen.arc(this.pole.x + this.pole.length*Math.cos(this.pole.angle),this.pole.y + this.pole.length*Math.sin(this.pole.angle),20,0,Math.PI*2)
+            pen.fill()
+            //i wanna give the cart a face
+            //eyes
+            pen.fillStyle = "white"
+            pen.beginPath()
+            pen.arc(this.x + this.width/4,this.y + this.height/2,10,0,Math.PI*2)
+            pen.fill()
+            pen.beginPath()
+            pen.arc(this.x + 3*this.width/4,this.y + this.height/2,10,0,Math.PI*2)
+            pen.fill()
+            //derpy eyes
+            pen.fillStyle = "black"
+            pen.beginPath()
+            pen.arc((this.x + this.width/4)-5,this.y + this.height/2,8,0,Math.PI*2)
+            pen.fill()
+            pen.beginPath()
+            pen.arc((this.x + 3*this.width/4)+5,this.y + this.height/2,8,0,Math.PI*2)
+            pen.fill()
+            // UWU mouth
+            pen.strokeStyle = "black"
+            pen.lineWidth = 2
+            pen.beginPath()
+            pen.arc((this.x + this.width/2)-5,this.y + (this.height/2)+this.height/4,5,0,Math.PI)
+            pen.stroke()
+            pen.beginPath()
+            pen.arc((this.x + this.width/2)+5,this.y + (this.height/2)+this.height/4,5,0,Math.PI)
+            pen.stroke()
+            //text
+            pen.fillStyle = 'black';
+            pen.font = '14px Arial';
+            pen.fillText(this.alpha, this.x+this.width/2, this.y+this.height+14);
+
+
+
+        }
+        update(){
+            //increase time limit
+            this.timer++
+            //thinking
+            this.think()
+            this.oldState = [...this.inputs]
+            //AI
+            let outputs
+                outputs = steeringData ? this.brain.FeedForwardSteered(this.inputs, steeringData, this.alpha) : this.brain.FeedForward(this.inputs)
+            let action = argmax(outputs)
+            switch(action){
+                case 0:
+                    this.left = true
+                    this.right = false
+                    break
+                case 1:
+                    this.left = false
+                    this.right = false
+                    break
+                case 2:
+                    this.left = false
+                    this.right = true
+                    break
+            }
+            //controls
+            if(this.left){
+                this.acc = -this.force
+            }else if(this.right){
+                this.acc = this.force
+            }else{
+                this.acc = 0
+            }
+            //moving
+            this.pole.x = this.x + this.width/2
+            this.speed += this.acc
+            this.speed *= 0.9
+            this.x += this.speed
+            //pendulum motion
+            //gravity
+            let g = 0.99
+            //update pole angle based on cart acceleration
+            this.pole.acc = (g / this.pole.length) * Math.cos(this.pole.angle) + (this.acc / this.pole.length) * Math.sin(this.pole.angle)
+            this.pole.vel += this.pole.acc
+            this.pole.angle += this.pole.vel
+            this.pole.vel *= 0.99 // damping
+            //boundaries (wrapped)
+            if(this.x+this.width <= 0){
+                this.x = box.width
+            }else if(this.x >= box.width + this.width){
+                this.x = -this.width
+            }
+            //boundaries (normal)
+/*             if(this.x <= 0){
+                this.x = 0.01
+                this.speed = 0
+            }else if(this.x >= box.width - this.width){
+                this.x = box.width - this.width - 0.01
+                this.speed = 0
+            } */
+            //get the new state
+            this.think()
+            this.newState = [...this.inputs]
+            // Calculate reward
+            let done =  this.timer > this.timerLimit
+            const angleFromUpright = this.pole.angle + Math.PI/2
+            // reward = uprightness - angular velocity penalty + survival bonus
+            const reward = 
+                (3*(Math.cos(angleFromUpright)))       // upright
+                -( 0.5 * Math.abs(this.pole.vel))   // penalize spinning
+                + 0.05                            // small time bonus
+            this.experience.push({
+                state: this.oldState,
+                action: action,
+                reward: reward,
+                nextState: this.newState,
+                done: done,
+                timeStep:this.updateFrame,
+                episode:this.episodes
+            })
+             if(done){
+                let BigReward = 0
+                for(let i  = 0; i < this.experience.length; i++){
+                    BigReward += (1/this.experience.length)*this.experience[i].reward
+                }
+                console.log("Alpha: "+this.alpha)
+                console.log("average reward: "+BigReward)
+                this.reset()
+                //console.log(JSON.stringify(this.experience))
+                this.experience = []
+             }
+        }
+    
+    }
+    let cartpoles = []
+    for(let i  = 0; i < count; i++){
+        cartpoles.push(new Cartpole)
+    }
+    fetch('NeuralNetwork_Fixed_Weights.json')
+    .then(r => r.json())
+    .then(netJson => {
+        for (let c = 0; c < cartpoles.length; c++) {
+            const brain = cartpoles[c].brain
+            for (let l = 0; l < brain.layers.length; l++) {
+                const src = netJson.layers[l]
+                brain.layers[l].weights = src.weights.map(row => [...row])
+                brain.layers[l].biases = [...src.biases]
+            }
+        }
+        console.log("Weights loaded!")
+    })
+    function loop(){
+        //updating
+        for(let i = 0; i < cycles; i++){
+            cartpoles.forEach((cartpole,i)=>{
+                cartpole.update()
+            })
+        }
+        //drawing
+        pen.fillStyle = "rgb(125,125,255)"
+        pen.fillRect(0,0,box.width,box.height)
+        cartpoles.forEach((cartpole,i)=>{
+                cartpole.draw(i)
+        })
+        //recalling
+        requestAnimationFrame(loop)
+    }
+    loop()
+</script>
